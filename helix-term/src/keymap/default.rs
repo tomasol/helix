@@ -85,7 +85,7 @@ pub fn default() -> HashMap<Mode, Keymap> {
         "A-n" | "A-right" => select_next_sibling,
 
         "%" => select_all,
-        "x" => extend_line,
+        "x" => extend_line_below,
         "X" => extend_to_line_bounds,
         "A-x" => shrink_to_line_bounds,
 
@@ -205,6 +205,7 @@ pub fn default() -> HashMap<Mode, Keymap> {
             "f" => file_picker,
             "F" => file_picker_in_current_directory,
             "b" => buffer_picker,
+            "j" => jumplist_picker,
             "s" => symbol_picker,
             "S" => workspace_symbol_picker,
             "g" => diagnostics_picker,
@@ -357,9 +358,7 @@ pub fn default() -> HashMap<Mode, Keymap> {
         "left" => move_char_left,
         "C-b" => move_char_left,
         "down" => move_line_down,
-        "C-n" => move_line_down,
         "up" => move_line_up,
-        "C-p" => move_line_up,
         "right" => move_char_right,
         "C-f" => move_char_right,
         "A-b" => move_prev_word_end,

@@ -38,8 +38,6 @@ pub enum Error {
     Timeout,
     #[error("server closed the stream")]
     StreamClosed,
-    #[error("LSP not defined")]
-    LspNotDefined,
     #[error("Unhandled")]
     Unhandled,
     #[error(transparent)]
@@ -58,7 +56,7 @@ pub enum OffsetEncoding {
 
 pub mod util {
     use super::*;
-    use helix_core::{Range, Rope, Transaction};
+    use helix_core::{diagnostic::NumberOrString, Range, Rope, Transaction};
 
     /// Converts a diagnostic in the document to [`lsp::Diagnostic`].
     ///
@@ -78,11 +76,19 @@ pub mod util {
             Error => lsp::DiagnosticSeverity::ERROR,
         });
 
+        let code = match diag.code.clone() {
+            Some(x) => match x {
+                NumberOrString::Number(x) => Some(lsp::NumberOrString::Number(x)),
+                NumberOrString::String(x) => Some(lsp::NumberOrString::String(x)),
+            },
+            None => None,
+        };
+
         // TODO: add support for Diagnostic.data
         lsp::Diagnostic::new(
             range_to_lsp_range(doc, range, offset_encoding),
             severity,
-            None,
+            code,
             None,
             diag.message.to_owned(),
             None,
@@ -205,22 +211,6 @@ pub mod util {
             }),
         )
     }
-
-    /// The result of asking the language server to format the document. This can be turned into a
-    /// `Transaction`, but the advantage of not doing that straight away is that this one is
-    /// `Send` and `Sync`.
-    #[derive(Clone, Debug)]
-    pub struct LspFormatting {
-        pub doc: Rope,
-        pub edits: Vec<lsp::TextEdit>,
-        pub offset_encoding: OffsetEncoding,
-    }
-
-    impl From<LspFormatting> for Transaction {
-        fn from(fmt: LspFormatting) -> Transaction {
-            generate_transaction_from_edits(&fmt.doc, fmt.edits, fmt.offset_encoding)
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -328,14 +318,14 @@ impl Registry {
             .map(|(_, client)| client.as_ref())
     }
 
-    pub fn get(&mut self, language_config: &LanguageConfiguration) -> Result<Arc<Client>> {
+    pub fn get(&mut self, language_config: &LanguageConfiguration) -> Result<Option<Arc<Client>>> {
         let config = match &language_config.language_server {
             Some(config) => config,
-            None => return Err(Error::LspNotDefined),
+            None => return Ok(None),
         };
 
         match self.inner.entry(language_config.scope.clone()) {
-            Entry::Occupied(entry) => Ok(entry.get().1.clone()),
+            Entry::Occupied(entry) => Ok(Some(entry.get().1.clone())),
             Entry::Vacant(entry) => {
                 // initialize a new client
                 let id = self.counter.fetch_add(1, Ordering::Relaxed);
@@ -378,7 +368,7 @@ impl Registry {
                 });
 
                 entry.insert((id, client.clone()));
-                Ok(client)
+                Ok(Some(client))
             }
         }
     }

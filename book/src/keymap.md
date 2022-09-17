@@ -1,7 +1,27 @@
 # Keymap
 
-- Mappings marked (**LSP**) require an active language server for the file.
-- Mappings marked (**TS**) require a tree-sitter grammar for the filetype.
+- [Normal mode](#normal-mode)
+  - [Movement](#movement)
+  - [Changes](#changes)
+    - [Shell](#shell)
+  - [Selection manipulation](#selection-manipulation)
+  - [Search](#search)
+  - [Minor modes](#minor-modes)
+    - [View mode](#view-mode)
+    - [Goto mode](#goto-mode)
+    - [Match mode](#match-mode)
+    - [Window mode](#window-mode)
+    - [Space mode](#space-mode)
+      - [Popup](#popup)
+    - [Unimpaired](#unimpaired)
+- [Insert Mode](#insert-mode)
+- [Select / extend mode](#select--extend-mode)
+- [Picker](#picker)
+- [Prompt](#prompt)
+
+> 💡 Mappings marked (**LSP**) require an active language server for the file.
+
+> 💡 Mappings marked (**TS**) require a tree-sitter grammar for the filetype.
 
 ## Normal mode
 
@@ -105,7 +125,7 @@
 | `Alt-(`               | Rotate selection contents backward                                | `rotate_selection_contents_backward` |
 | `Alt-)`               | Rotate selection contents forward                                 | `rotate_selection_contents_forward`  |
 | `%`                   | Select entire file                                                | `select_all`                         |
-| `x`                   | Select current line, if already selected, extend to next line     | `extend_line`                        |
+| `x`                   | Select current line, if already selected, extend to next line     | `extend_line_below`                  |
 | `X`                   | Extend selection to line bounds (line-wise selection)             | `extend_to_line_bounds`              |
 | `Alt-x`               | Shrink selection to line bounds (line-wise selection)             | `shrink_to_line_bounds`              |
 | `J`                   | Join lines inside selection                                       | `join_selections`                    |
@@ -237,7 +257,9 @@ This layer is a kludge of mappings, mostly pickers.
 | Key     | Description                                                             | Command                             |
 | -----   | -----------                                                             | -------                             |
 | `f`     | Open file picker                                                        | `file_picker`                       |
+| `F`     | Open file picker at current working directory                           | `file_picker_in_current_directory`  |
 | `b`     | Open buffer picker                                                      | `buffer_picker`                     |
+| `j`     | Open jumplist picker                                                    | `jumplist_picker`                   |
 | `k`     | Show documentation for item under cursor in a [popup](#popup) (**LSP**) | `hover`                             |
 | `s`     | Open document symbol picker (**LSP**)                                   | `symbol_picker`                     |
 | `S`     | Open workspace symbol picker (**LSP**)                                  | `workspace_symbol_picker`           |
@@ -336,15 +358,15 @@ mode before pressing `n` or `N` makes it possible to keep the current
 selection. Toggling it on and off during your iterative searching allows
 you to selectively add search terms to your selections.
 
-# Picker
+## Picker
 
 Keys to use within picker. Remapping currently not supported.
 
 | Key                          | Description       |
 | -----                        | -------------     |
-| `Up`, `Ctrl-p`               | Previous entry    |
+| `Tab`, `Up`, `Ctrl-p`        | Previous entry    |
 | `PageUp`, `Ctrl-u`           | Page up           |
-| `Down`, `Ctrl-n`             | Next entry        |
+| `Shift-tab`, `Down`, `Ctrl-n`| Next entry        |
 | `PageDown`, `Ctrl-d`         | Page down         |
 | `Home`                       | Go to first entry |
 | `End`                        | Go to last entry  |
@@ -355,7 +377,7 @@ Keys to use within picker. Remapping currently not supported.
 | `Ctrl-t`                     | Toggle preview    |
 | `Escape`, `Ctrl-c`           | Close picker      |
 
-# Prompt
+## Prompt
 
 Keys to use within prompt, Remapping currently not supported.
 

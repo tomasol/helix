@@ -2,6 +2,7 @@ use arc_swap::{access::Map, ArcSwap};
 use futures_util::Stream;
 use helix_core::{
     config::{default_syntax_loader, user_syntax_loader},
+    diagnostic::NumberOrString,
     pos_at_coords, syntax, Selection,
 };
 use helix_lsp::{lsp, util::lsp_pos_to_pos, LspProgressMap};
@@ -11,7 +12,7 @@ use serde_json::json;
 use crate::{
     args::Args,
     commands::apply_workspace_edit,
-    compositor::Compositor,
+    compositor::{Compositor, Event},
     config::Config,
     job::Jobs,
     keymap::Keymaps,
@@ -28,7 +29,10 @@ use std::{
 use anyhow::{Context, Error};
 
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, Event},
+    event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event as CrosstermEvent,
+    },
     execute, terminal,
     tty::IsTty,
 };
@@ -81,6 +85,22 @@ fn setup_integration_logging() {
         .apply();
 }
 
+fn restore_term() -> Result<(), Error> {
+    let mut stdout = stdout();
+    // reset cursor shape
+    write!(stdout, "\x1B[0 q")?;
+    // Ignore errors on disabling, this might trigger on windows if we call
+    // disable without calling enable previously
+    let _ = execute!(stdout, DisableMouseCapture);
+    execute!(
+        stdout,
+        DisableBracketedPaste,
+        terminal::LeaveAlternateScreen
+    )?;
+    terminal::disable_raw_mode()?;
+    Ok(())
+}
+
 impl Application {
     pub fn new(args: Args, config: Config) -> Result<Self, Error> {
         #[cfg(feature = "integration")]
@@ -88,9 +108,8 @@ impl Application {
 
         use helix_view::editor::Action;
 
-        let config_dir = helix_loader::config_dir();
         let theme_loader = std::sync::Arc::new(theme::Loader::new(
-            &config_dir,
+            &helix_loader::config_dir(),
             &helix_loader::runtime_dir(),
         ));
 
@@ -176,7 +195,7 @@ impl Application {
                         // `--vsplit` or `--hsplit` are used, the file which is
                         // opened last is focused on.
                         let view_id = editor.tree.focus;
-                        let doc = editor.document_mut(doc_id).unwrap();
+                        let doc = doc_mut!(editor, &doc_id);
                         let pos = Selection::point(pos_at_coords(doc.text().slice(..), pos, true));
                         doc.set_selection(view_id, pos);
                     }
@@ -386,7 +405,7 @@ impl Application {
         match signal {
             signal::SIGTSTP => {
                 self.compositor.save_cursor();
-                self.restore_term().unwrap();
+                restore_term().unwrap();
                 low_level::emulate_default_handler(signal::SIGTSTP).unwrap();
             }
             signal::SIGCONT => {
@@ -418,22 +437,20 @@ impl Application {
         }
     }
 
-    pub fn handle_terminal_events(&mut self, event: Result<Event, crossterm::ErrorKind>) {
+    pub fn handle_terminal_events(&mut self, event: Result<CrosstermEvent, crossterm::ErrorKind>) {
         let mut cx = crate::compositor::Context {
             editor: &mut self.editor,
             jobs: &mut self.jobs,
             scroll: None,
         };
         // Handle key events
-        let should_redraw = match event {
-            Ok(Event::Resize(width, height)) => {
+        let should_redraw = match event.unwrap() {
+            CrosstermEvent::Resize(width, height) => {
                 self.compositor.resize(width, height);
-
                 self.compositor
-                    .handle_event(Event::Resize(width, height), &mut cx)
+                    .handle_event(&Event::Resize(width, height), &mut cx)
             }
-            Ok(event) => self.compositor.handle_event(event, &mut cx),
-            Err(x) => panic!("{}", x),
+            event => self.compositor.handle_event(&event.into(), &mut cx),
         };
 
         if should_redraw && !self.editor.should_close() {
@@ -488,8 +505,13 @@ impl Application {
                             let language_id =
                                 doc.language_id().map(ToOwned::to_owned).unwrap_or_default();
 
+                            let url = match doc.url() {
+                                Some(url) => url,
+                                None => continue, // skip documents with no path
+                            };
+
                             tokio::spawn(language_server.text_document_did_open(
-                                doc.url().unwrap(),
+                                url,
                                 doc.version(),
                                 doc.text(),
                                 language_id,
@@ -511,7 +533,12 @@ impl Application {
                                     use helix_core::diagnostic::{Diagnostic, Range, Severity::*};
                                     use lsp::DiagnosticSeverity;
 
-                                    let language_server = doc.language_server().unwrap();
+                                    let language_server = if let Some(language_server) = doc.language_server() {
+                                        language_server
+                                    } else {
+                                        log::warn!("Discarding diagnostic because language server is not initialized: {:?}", diagnostic);
+                                        return None;
+                                    };
 
                                     // TODO: convert inside server
                                     let start = if let Some(start) = lsp_pos_to_pos(
@@ -556,12 +583,24 @@ impl Application {
                                         }
                                     };
 
+                                    let code = match diagnostic.code.clone() {
+                                        Some(x) => match x {
+                                            lsp::NumberOrString::Number(x) => {
+                                                Some(NumberOrString::Number(x))
+                                            }
+                                            lsp::NumberOrString::String(x) => {
+                                                Some(NumberOrString::String(x))
+                                            }
+                                        },
+                                        None => None,
+                                    };
+
                                     Some(Diagnostic {
                                         range: Range { start, end },
                                         line: diagnostic.range.start.line as usize,
                                         message: diagnostic.message.clone(),
                                         severity,
-                                        // code
+                                        code,
                                         // source
                                     })
                                 })
@@ -777,23 +816,11 @@ impl Application {
     async fn claim_term(&mut self) -> Result<(), Error> {
         terminal::enable_raw_mode()?;
         let mut stdout = stdout();
-        execute!(stdout, terminal::EnterAlternateScreen)?;
+        execute!(stdout, terminal::EnterAlternateScreen, EnableBracketedPaste)?;
         execute!(stdout, terminal::Clear(terminal::ClearType::All))?;
         if self.config.load().editor.mouse {
             execute!(stdout, EnableMouseCapture)?;
         }
-        Ok(())
-    }
-
-    fn restore_term(&mut self) -> Result<(), Error> {
-        let mut stdout = stdout();
-        // reset cursor shape
-        write!(stdout, "\x1B[2 q")?;
-        // Ignore errors on disabling, this might trigger on windows if we call
-        // disable without calling enable previously
-        let _ = execute!(stdout, DisableMouseCapture);
-        execute!(stdout, terminal::LeaveAlternateScreen)?;
-        terminal::disable_raw_mode()?;
         Ok(())
     }
 
@@ -808,16 +835,14 @@ impl Application {
         std::panic::set_hook(Box::new(move |info| {
             // We can't handle errors properly inside this closure.  And it's
             // probably not a good idea to `unwrap()` inside a panic handler.
-            // So we just ignore the `Result`s.
-            let _ = execute!(std::io::stdout(), DisableMouseCapture);
-            let _ = execute!(std::io::stdout(), terminal::LeaveAlternateScreen);
-            let _ = terminal::disable_raw_mode();
+            // So we just ignore the `Result`.
+            let _ = restore_term();
             hook(info);
         }));
 
         self.event_loop(input_stream).await;
         self.close().await?;
-        self.restore_term()?;
+        restore_term()?;
 
         Ok(self.editor.exit_code)
     }
